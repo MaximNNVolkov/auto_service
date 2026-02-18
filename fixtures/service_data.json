@@ -1,0 +1,107 @@
+[
+  {
+    "model": "cars.car",
+    "pk": 1,
+    "fields": {
+      "brand": "Volkswagen",
+      "model": "Tiguan 1.4 TSI",
+      "year": 2020,
+      "vin": "",
+      "current_mileage": 165930,
+      "owner": 2
+    }
+  },
+
+  {
+    "model": "service.servicerecord",
+    "pk": 1,
+    "fields": {
+      "car": 1,
+      "date": "2022-08-31",
+      "mileage": 0,
+      "total_cost": "6300.00",
+      "description": "Замена масла ДВС"
+    }
+  },
+  {
+    "model": "service.part",
+    "pk": 1,
+    "fields": {
+      "service": 1,
+      "name": "Масло ДВС Shell Helix Ultra 5W-40",
+      "cost": "6300.00",
+      "interval_km": null,
+      "interval_months": 7
+    }
+  },
+
+  {
+    "model": "service.servicerecord",
+    "pk": 2,
+    "fields": {
+      "car": 1,
+      "date": "2023-05-26",
+      "mileage": 0,
+      "total_cost": "38900.00",
+      "description": "Большое ТО: чистка впуска, ГРМ, радиаторы"
+    }
+  },
+
+  {
+    "model": "service.servicerecord",
+    "pk": 3,
+    "fields": {
+      "car": 1,
+      "date": "2024-03-02",
+      "mileage": 0,
+      "total_cost": "23500.00",
+      "description": "Замена масла ДВС и масла КПП"
+    }
+  },
+  {
+    "model": "service.part",
+    "pk": 2,
+    "fields": {
+      "service": 3,
+      "name": "Масло КПП",
+      "cost": "10950.00",
+      "interval_km": 60000,
+      "interval_months": null
+    }
+  },
+
+  {
+    "model": "service.servicerecord",
+    "pk": 4,
+    "fields": {
+      "car": 1,
+      "date": "2025-06-30",
+      "mileage": 0,
+      "total_cost": "0.00",
+      "description": "Замена свечей и задних тормозов"
+    }
+  },
+  {
+    "model": "service.part",
+    "pk": 3,
+    "fields": {
+      "service": 4,
+      "name": "Свечи NGK",
+      "cost": "0.00",
+      "interval_km": 40000,
+      "interval_months": null
+    }
+  },
+
+  {
+    "model": "service.servicerecord",
+    "pk": 5,
+    "fields": {
+      "car": 1,
+      "date": "2026-01-13",
+      "mileage": 165930,
+      "total_cost": "99300.00",
+      "description": "Крупный ремонт, передние тормоза, рейка"
+    }
+  }
+]
