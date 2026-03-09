@@ -198,6 +198,16 @@
                     {{ work_form.item_name.errors }}
                 </div>
                 <div class="field">
+                    {{ work_form.custom_item_name.label_tag }}
+                    {{ work_form.custom_item_name }}
+                    {{ work_form.custom_item_name.errors }}
+                </div>
+                <div class="field" id="custom-section-field">
+                    {{ work_form.custom_section.label_tag }}
+                    {{ work_form.custom_section }}
+                    {{ work_form.custom_section.errors }}
+                </div>
+                <div class="field">
                     {{ work_form.mileage.label_tag }}
                     {{ work_form.mileage }}
                     {{ work_form.mileage.errors }}
@@ -271,13 +281,23 @@
     const openButton = document.getElementById("open-work-form");
     const typeSelect = document.getElementById("id_element_type");
     const itemSelect = document.getElementById("id_item_name");
+    const customItemInput = document.getElementById("id_custom_item_name");
+    const customSectionField = document.getElementById("custom-section-field");
+    const customSectionSelect = document.getElementById("id_custom_section");
     const consumableItems = JSON.parse("{{ consumable_items_json|escapejs }}");
     const workItems = JSON.parse("{{ work_items_json|escapejs }}");
+    const customItems = JSON.parse("{{ custom_items_json|escapejs }}");
+
+    function getItemsByType(elementType) {
+        const defaultItems = elementType === "work" ? workItems : consumableItems;
+        const extraItems = customItems[elementType] || [];
+        return [...new Set([...defaultItems, ...extraItems])];
+    }
 
     function rebuildItemOptions() {
         const selectedType = typeSelect.value;
         const selectedItem = itemSelect.value;
-        const items = selectedType === "work" ? workItems : consumableItems;
+        const items = getItemsByType(selectedType);
 
         itemSelect.innerHTML = "";
         for (const item of items) {
@@ -292,12 +312,25 @@
         }
     }
 
+    function toggleCustomSectionField() {
+        const customValue = customItemInput.value.trim();
+        const hasCustomValue = customValue.length > 0;
+        customSectionField.style.display = hasCustomValue ? "block" : "none";
+
+        const existingItems = getItemsByType(typeSelect.value);
+        const requiresSection = hasCustomValue && !existingItems.includes(customValue);
+        customSectionSelect.required = requiresSection;
+    }
+
     openButton.addEventListener("click", () => {
         panel.classList.toggle("open");
     });
 
     typeSelect.addEventListener("change", rebuildItemOptions);
+    typeSelect.addEventListener("change", toggleCustomSectionField);
+    customItemInput.addEventListener("input", toggleCustomSectionField);
     rebuildItemOptions();
+    toggleCustomSectionField();
 </script>
 </body>
 </html>

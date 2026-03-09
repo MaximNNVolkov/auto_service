@@ -15,7 +15,7 @@ from .constants import (
     WORK_ITEMS,
 )
 from .forms import WorkEntryForm
-from .models import ServiceCardEntry
+from .models import CustomServiceItem, ServiceCardEntry
 
 SECTION_CONFIG = {
     "plan": {
@@ -44,6 +44,25 @@ SECTION_CONFIG = {
         "columns": ("Узел", "Последняя замена", "Пробег", "Интервал", "Следующая замена", "Стоимость"),
     },
 }
+
+
+def _empty_custom_items_by_type():
+    return {
+        ServiceCardEntry.ElementType.CONSUMABLE: [],
+        ServiceCardEntry.ElementType.WORK: [],
+    }
+
+
+def _load_custom_item_maps(car):
+    items_by_type = _empty_custom_items_by_type()
+    sections_by_type = {
+        ServiceCardEntry.ElementType.CONSUMABLE: {},
+        ServiceCardEntry.ElementType.WORK: {},
+    }
+    for item in CustomServiceItem.objects.filter(car=car).order_by("name"):
+        items_by_type[item.element_type].append(item.name)
+        sections_by_type[item.element_type][item.name] = item.section
+    return items_by_type, sections_by_type
 
 
 def _calculate_average_interval_days(entries):
@@ -142,6 +161,11 @@ def _build_plan_rows(source_rows):
 @login_required
 def service_card_view(request):
     car = request.user.car_set.order_by("id").first()
+    custom_items_by_type = _empty_custom_items_by_type()
+    custom_sections_by_type = {
+        ServiceCardEntry.ElementType.CONSUMABLE: {},
+        ServiceCardEntry.ElementType.WORK: {},
+    }
     if not car:
         messages.error(request, "У пользователя пока нет автомобиля.")
         return render(
@@ -153,43 +177,69 @@ def service_card_view(request):
                 "work_form": WorkEntryForm(),
                 "consumable_items_json": json.dumps(CONSUMABLE_ITEMS, ensure_ascii=False),
                 "work_items_json": json.dumps(WORK_ITEMS, ensure_ascii=False),
+                "custom_items_json": json.dumps(custom_items_by_type, ensure_ascii=False),
             },
         )
+    custom_items_by_type, custom_sections_by_type = _load_custom_item_maps(car)
 
     if request.method == "POST":
-        work_form = WorkEntryForm(request.POST)
+        work_form = WorkEntryForm(
+            request.POST,
+            custom_items_by_type=custom_items_by_type,
+        )
         if work_form.is_valid():
             element_type = work_form.cleaned_data["element_type"]
             item_name = work_form.cleaned_data["item_name"]
+            custom_item_name = work_form.cleaned_data["custom_item_name"]
+            custom_section = work_form.cleaned_data["custom_section"]
             mileage = work_form.cleaned_data["mileage"]
             cost = work_form.cleaned_data["cost"]
-            section = ITEM_TO_SECTION[item_name]
+            section = ITEM_TO_SECTION.get(item_name)
+            if not section:
+                section = custom_sections_by_type.get(element_type, {}).get(item_name)
+            if not section and custom_item_name:
+                section = custom_section
 
-            create_kwargs = {
-                "car": car,
-                "section": section,
-                "element_type": element_type,
-                "item_name": item_name,
-                "service_date": timezone.localdate(),
-                "mileage": mileage,
-                "cost": cost,
-            }
-            if element_type == ELEMENT_TYPE_WORK:
-                if section == ServiceCardEntry.Section.CHASSIS:
-                    create_kwargs["details"] = "выполнено"
-                    create_kwargs["repeatability"] = "разово"
-                elif section == ServiceCardEntry.Section.EXTRA:
-                    create_kwargs["notes"] = "выполнено"
+            if not section:
+                work_form.add_error("item_name", "Не удалось определить раздел для записи.")
+            else:
+                create_kwargs = {
+                    "car": car,
+                    "section": section,
+                    "element_type": element_type,
+                    "item_name": item_name,
+                    "service_date": timezone.localdate(),
+                    "mileage": mileage,
+                    "cost": cost,
+                }
+                if element_type == ELEMENT_TYPE_WORK:
+                    if section == ServiceCardEntry.Section.CHASSIS:
+                        create_kwargs["details"] = "выполнено"
+                        create_kwargs["repeatability"] = "разово"
+                    elif section == ServiceCardEntry.Section.EXTRA:
+                        create_kwargs["notes"] = "выполнено"
 
-            ServiceCardEntry.objects.create(
-                **create_kwargs,
-            )
-            messages.success(request, "Запись добавлена в сервисную карту.")
-            return redirect("service:service_card")
+                ServiceCardEntry.objects.create(
+                    **create_kwargs,
+                )
+
+                if custom_item_name and item_name not in ITEM_TO_SECTION:
+                    custom_item, created = CustomServiceItem.objects.get_or_create(
+                        car=car,
+                        element_type=element_type,
+                        name=item_name,
+                        defaults={"section": section},
+                    )
+                    if not created and custom_item.section != section:
+                        custom_item.section = section
+                        custom_item.save(update_fields=["section"])
+
+                messages.success(request, "Запись добавлена в сервисную карту.")
+                return redirect("service:service_card")
 
         messages.error(request, "Проверьте заполнение формы.")
     else:
-        work_form = WorkEntryForm()
+        work_form = WorkEntryForm(custom_items_by_type=custom_items_by_type)
 
     entries = ServiceCardEntry.objects.filter(car=car)
     sections = []
@@ -227,5 +277,6 @@ def service_card_view(request):
             "work_form": work_form,
             "consumable_items_json": json.dumps(CONSUMABLE_ITEMS, ensure_ascii=False),
             "work_items_json": json.dumps(WORK_ITEMS, ensure_ascii=False),
+            "custom_items_json": json.dumps(custom_items_by_type, ensure_ascii=False),
         },
     )

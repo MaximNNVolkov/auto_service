@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from cars.models import Car
-from service.models import ServiceCardEntry
+from service.models import CustomServiceItem, ServiceCardEntry
 
 
 class ServiceCardViewTests(TestCase):
@@ -110,3 +110,79 @@ class ServiceCardViewTests(TestCase):
         oil_row = next(row for row in plan_section["rows"] if row["item_name"] == "Масло ДВС 5W-40")
         self.assertIsNotNone(oil_row["next_date"])
         self.assertEqual(str(oil_row["forecast_cost"]), "2300.00")
+
+    def test_user_can_add_custom_item_and_reuse_later(self):
+        self.client.login(username="tester", password="pass12345")
+        response = self.client.post(
+            reverse("service:service_card"),
+            data={
+                "element_type": "work",
+                "item_name": "Чистка форсунок",
+                "custom_item_name": "Замена лампы ближнего света",
+                "custom_section": "extra",
+                "mileage": "101000",
+                "cost": "1200",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+
+        created_entry = ServiceCardEntry.objects.get(
+            car=self.car,
+            item_name="Замена лампы ближнего света",
+            mileage=101000,
+        )
+        self.assertEqual(created_entry.section, ServiceCardEntry.Section.EXTRA)
+
+        custom_item = CustomServiceItem.objects.get(
+            car=self.car,
+            element_type=ServiceCardEntry.ElementType.WORK,
+            name="Замена лампы ближнего света",
+        )
+        self.assertEqual(custom_item.section, ServiceCardEntry.Section.EXTRA)
+
+        repeat_response = self.client.post(
+            reverse("service:service_card"),
+            data={
+                "element_type": "work",
+                "item_name": "Замена лампы ближнего света",
+                "custom_item_name": "",
+                "custom_section": "",
+                "mileage": "101500",
+                "cost": "1300",
+            },
+        )
+        self.assertEqual(repeat_response.status_code, 302)
+        self.assertEqual(
+            ServiceCardEntry.objects.filter(
+                car=self.car,
+                item_name="Замена лампы ближнего света",
+            ).count(),
+            2,
+        )
+
+    def test_existing_custom_item_can_be_saved_without_custom_fields(self):
+        CustomServiceItem.objects.create(
+            car=self.car,
+            element_type=ServiceCardEntry.ElementType.WORK,
+            section=ServiceCardEntry.Section.CHASSIS,
+            name="Замена рулевого наконечника",
+        )
+        self.client.login(username="tester", password="pass12345")
+        response = self.client.post(
+            reverse("service:service_card"),
+            data={
+                "element_type": "work",
+                "item_name": "Замена рулевого наконечника",
+                "custom_item_name": "",
+                "custom_section": "",
+                "mileage": "102500",
+                "cost": "3400",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        created_entry = ServiceCardEntry.objects.get(
+            car=self.car,
+            item_name="Замена рулевого наконечника",
+            mileage=102500,
+        )
+        self.assertEqual(created_entry.section, ServiceCardEntry.Section.CHASSIS)

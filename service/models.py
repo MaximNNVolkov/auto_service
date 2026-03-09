@@ -53,3 +53,24 @@ class ServiceCardEntry(models.Model):
 
     def __str__(self):
         return f"{self.get_section_display()}: {self.item_name}"
+
+
+class CustomServiceItem(models.Model):
+    car = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="custom_service_items")
+    element_type = models.CharField(
+        max_length=20,
+        choices=ServiceCardEntry.ElementType.choices,
+    )
+    section = models.CharField(
+        max_length=20,
+        choices=ServiceCardEntry.Section.choices,
+    )
+    name = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("element_type", "name")
+        unique_together = ("car", "element_type", "name")
+
+    def __str__(self):
+        return f"{self.name} ({self.get_element_type_display()})"
