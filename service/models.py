@@ -1,21 +1,6 @@
 from django.db import models
 from cars.models import Car
 
-class ServiceRecord(models.Model):
-    car = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="records")
-    date = models.DateField()
-    mileage = models.IntegerField()
-    total_cost = models.DecimalField(max_digits=12, decimal_places=2)
-    description = models.TextField(blank=True)
-
-class Part(models.Model):
-    service = models.ForeignKey(ServiceRecord, on_delete=models.CASCADE, related_name="parts")
-    name = models.CharField(max_length=255)
-    cost = models.DecimalField(max_digits=10, decimal_places=2)
-
-    interval_km = models.IntegerField(null=True, blank=True)
-    interval_months = models.IntegerField(null=True, blank=True)
-
 
 class ServiceCardEntry(models.Model):
     class ElementType(models.TextChoices):
