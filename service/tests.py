@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from django.utils import timezone
 
 from cars.models import Car
+from service import services
 from service.models import CustomServiceItem, ServiceCardEntry
 
 
@@ -256,3 +257,179 @@ class ServiceCardViewTests(TestCase):
         self._post_entry(service_date="2024-01-01", mileage="80000")
         self.car.refresh_from_db()
         self.assertEqual(self.car.current_mileage, 105000)
+
+
+class EntryManagementTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(username="tester", password="pass12345")
+        self.other = user_model.objects.create_user(username="other", password="pass12345")
+        self.car = Car.objects.create(
+            owner=self.user, brand="Volkswagen", model="Tiguan", year=2020, vin="VIN1", current_mileage=100000
+        )
+        self.second_car = Car.objects.create(
+            owner=self.user, brand="Skoda", model="Octavia", year=2018, vin="VIN2", current_mileage=50000
+        )
+        self.foreign_car = Car.objects.create(
+            owner=self.other, brand="Lada", model="Vesta", year=2021, vin="VIN3", current_mileage=30000
+        )
+        self.entry = self._create_entry(self.car, "2025-01-01", 90000)
+        self.client.login(username="tester", password="pass12345")
+
+    @staticmethod
+    def _create_entry(car, service_date, mileage, item_name="Масло ДВС 5W-40"):
+        return ServiceCardEntry.objects.create(
+            car=car,
+            section=ServiceCardEntry.Section.REGULAR,
+            element_type=ServiceCardEntry.ElementType.CONSUMABLE,
+            item_name=item_name,
+            service_date=service_date,
+            mileage=mileage,
+            cost="1000.00",
+        )
+
+    def test_first_car_is_selected_by_default(self):
+        response = self.client.get(reverse("service:service_card"))
+        self.assertEqual(response.context["car"], self.car)
+        self.assertContains(response, 'name="car"')
+
+    def test_car_can_be_selected(self):
+        response = self.client.get(reverse("service:service_card"), {"car": self.second_car.pk})
+        self.assertEqual(response.context["car"], self.second_car)
+
+    def test_foreign_car_is_not_accessible(self):
+        response = self.client.get(reverse("service:service_card"), {"car": self.foreign_car.pk})
+        self.assertEqual(response.status_code, 404)
+
+    def test_entry_is_created_for_selected_car(self):
+        response = self.client.post(
+            reverse("service:service_card") + f"?car={self.second_car.pk}",
+            data={
+                "element_type": "consumable",
+                "item_name": "Масло ДВС 5W-40",
+                "service_date": timezone.localdate().isoformat(),
+                "mileage": "51000",
+                "cost": "5000",
+            },
+        )
+        self.assertRedirects(response, reverse("service:service_card") + f"?car={self.second_car.pk}")
+        self.assertTrue(ServiceCardEntry.objects.filter(car=self.second_car, mileage=51000).exists())
+
+    def test_entry_list_shows_only_selected_car_entries(self):
+        self._create_entry(self.second_car, "2025-02-01", 40000, item_name="Салонный фильтр")
+        response = self.client.get(reverse("service:entry_list"))
+        self.assertEqual(list(response.context["entries"]), [self.entry])
+
+    def test_edit_page_is_rendered(self):
+        response = self.client.get(reverse("service:entry_edit", args=[self.entry.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'value="2025-01-01"')
+
+    def test_entry_can_be_edited(self):
+        response = self.client.post(
+            reverse("service:entry_edit", args=[self.entry.pk]),
+            data={"service_date": "2025-01-05", "mileage": "105000", "cost": "1500"},
+        )
+        self.assertRedirects(response, reverse("service:entry_list") + f"?car={self.car.pk}")
+        self.entry.refresh_from_db()
+        self.assertEqual(self.entry.service_date, date(2025, 1, 5))
+        self.assertEqual(self.entry.mileage, 105000)
+        self.car.refresh_from_db()
+        self.assertEqual(self.car.current_mileage, 105000)
+
+    def test_edit_mileage_is_checked_against_other_entries_only(self):
+        self._create_entry(self.car, "2025-06-01", 95000)
+        response = self.client.post(
+            reverse("service:entry_edit", args=[self.entry.pk]),
+            data={"service_date": "2025-01-01", "mileage": "96000", "cost": "1000"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("mileage", response.context["form"].errors)
+
+        response = self.client.post(
+            reverse("service:entry_edit", args=[self.entry.pk]),
+            data={"service_date": "2025-01-01", "mileage": "91000", "cost": "1000"},
+        )
+        self.assertEqual(response.status_code, 302)
+
+    def test_entry_can_be_deleted(self):
+        response = self.client.post(reverse("service:entry_delete", args=[self.entry.pk]))
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(ServiceCardEntry.objects.filter(pk=self.entry.pk).exists())
+
+    def test_delete_requires_post(self):
+        response = self.client.get(reverse("service:entry_delete", args=[self.entry.pk]))
+        self.assertEqual(response.status_code, 405)
+        self.assertTrue(ServiceCardEntry.objects.filter(pk=self.entry.pk).exists())
+
+    def test_foreign_entry_cannot_be_edited_or_deleted(self):
+        foreign_entry = self._create_entry(self.foreign_car, "2025-01-01", 20000)
+        edit = self.client.get(reverse("service:entry_edit", args=[foreign_entry.pk]))
+        delete = self.client.post(reverse("service:entry_delete", args=[foreign_entry.pk]))
+        self.assertEqual(edit.status_code, 404)
+        self.assertEqual(delete.status_code, 404)
+        self.assertTrue(ServiceCardEntry.objects.filter(pk=foreign_entry.pk).exists())
+
+
+class IntervalCalculationTests(TestCase):
+    def setUp(self):
+        user = get_user_model().objects.create_user(username="tester", password="pass12345")
+        self.car = Car.objects.create(
+            owner=user, brand="Volkswagen", model="Tiguan", year=2020, vin="VIN1", current_mileage=100000
+        )
+
+    def _entry(self, service_date, mileage, item_name="Масло ДВС 5W-40"):
+        return ServiceCardEntry.objects.create(
+            car=self.car,
+            section=ServiceCardEntry.Section.REGULAR,
+            element_type=ServiceCardEntry.ElementType.CONSUMABLE,
+            item_name=item_name,
+            service_date=service_date,
+            mileage=mileage,
+            cost="1000.00",
+        )
+
+    def _rows(self):
+        entries = list(self.car.service_card_entries.all())
+        return services.build_section_rows(
+            entries,
+            daily_mileage=services.calculate_daily_mileage(entries),
+            current_mileage=self.car.current_mileage,
+            today=date(2024, 1, 1),
+        )
+
+    def test_mileage_interval_is_calculated(self):
+        self._entry(date(2022, 1, 1), 50000)
+        self._entry(date(2023, 1, 1), 60000)
+        row = self._rows()[0]
+        self.assertEqual(row["interval_km"], 10000)
+        self.assertEqual(row["next_mileage"], 70000)
+        self.assertEqual(row["interval_text"], "365 дн. / 10000 км")
+
+    def test_next_date_uses_earliest_of_time_and_mileage(self):
+        # Масло меняли раз в 2 года / 10 000 км, а машина проходит ~10 000 км в год:
+        # по пробегу замена нужна примерно через год, раньше, чем по времени.
+        self._entry(date(2020, 1, 1), 50000)
+        self._entry(date(2022, 1, 1), 60000)
+        self._entry(date(2022, 1, 1), 60000, item_name="Салонный фильтр")
+        self._entry(date(2023, 1, 1), 80000, item_name="Салонный фильтр")
+        oil = next(row for row in self._rows() if row["item_name"] == "Масло ДВС 5W-40")
+        self.assertEqual(oil["interval_days"], 731)
+        daily = services.calculate_daily_mileage(list(self.car.service_card_entries.all()))
+        self.assertEqual(daily, (30000, 1096))
+        self.assertEqual(oil["next_date"], date(2022, 1, 1) + timedelta(days=round(10000 * 1096 / 30000)))
+
+    def test_row_is_overdue_by_mileage(self):
+        self._entry(date(2023, 1, 1), 80000)
+        self._entry(date(2023, 6, 1), 90000)
+        row = self._rows()[0]
+        self.assertEqual(row["next_mileage"], 100000)
+        self.assertTrue(row["overdue"])
+
+    def test_plan_includes_items_with_only_mileage_forecast(self):
+        self._entry(None, 80000)
+        self._entry(None, 90000)
+        plan = services.build_plan_rows(self._rows())
+        self.assertEqual(len(plan), 1)
+        self.assertIsNone(plan[0]["next_date"])
+        self.assertEqual(plan[0]["next_mileage"], 100000)

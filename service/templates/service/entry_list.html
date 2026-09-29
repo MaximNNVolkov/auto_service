@@ -1,0 +1,54 @@
+{% extends "service/base.html" %}
+
+{% block title %}История записей{% endblock %}
+{% block heading %}История записей{% endblock %}
+
+{% block actions %}
+    <a class="btn" href="{% url 'service:service_card' %}{% if car %}?car={{ car.pk }}{% endif %}">К сервисной карте</a>
+{% endblock %}
+
+{% block content %}
+    <section class="section">
+        {% if entries %}
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                    <tr>
+                        <th>Дата</th>
+                        <th>Узел</th>
+                        <th>Раздел</th>
+                        <th>Пробег</th>
+                        <th>Стоимость</th>
+                        <th></th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {% for entry in entries %}
+                        <tr>
+                            <td>{% if entry.service_date %}{{ entry.service_date|date:"d.m.Y" }}{% else %}-{% endif %}</td>
+                            <td>{{ entry.item_name }}</td>
+                            <td>{{ entry.get_section_display }}</td>
+                            <td>{% if entry.mileage is not None %}{{ entry.mileage }} км{% else %}-{% endif %}</td>
+                            <td>{% if entry.cost is not None %}{{ entry.cost }} ₽{% else %}-{% endif %}</td>
+                            <td>
+                                <div class="row-actions">
+                                    <a href="{% url 'service:entry_edit' entry.pk %}">Изменить</a>
+                                    <form method="post" action="{% url 'service:entry_delete' entry.pk %}"
+                                          onsubmit="return confirm('Удалить запись «{{ entry.item_name|escapejs }}»?');">
+                                        {% csrf_token %}
+                                        <button class="link-button" type="submit">Удалить</button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% elif car %}
+            <div class="empty">Пока нет записей.</div>
+        {% else %}
+            <div class="empty">У текущего пользователя пока нет автомобиля.</div>
+        {% endif %}
+    </section>
+{% endblock %}

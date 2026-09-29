@@ -1,0 +1,50 @@
+{% load static %}<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Сервисная карта{% endblock %}</title>
+    <link rel="stylesheet" href="{% static 'service/style.css' %}">
+</head>
+<body>
+<div class="container">
+    <header class="topbar">
+        <div>
+            <h1 class="title">{% block heading %}Сервисная карта автомобиля{% endblock %}</h1>
+            {% if car %}
+                <p class="subtitle">{{ car.brand }} {{ car.model }} · VIN {{ car.vin|default:"—" }} · {{ car.current_mileage }} км</p>
+            {% endif %}
+            <p class="subtitle">Пользователь: {{ request.user.username }}</p>
+        </div>
+        <div class="topbar-actions">
+            {% if cars and cars|length > 1 %}
+                <form method="get">
+                    <select name="car" class="input car-select" aria-label="Автомобиль" onchange="this.form.submit()">
+                        {% for item in cars %}
+                            <option value="{{ item.pk }}"{% if item.pk == car.pk %} selected{% endif %}>{{ item }} ({{ item.year }})</option>
+                        {% endfor %}
+                    </select>
+                    <noscript><button class="btn" type="submit">Выбрать</button></noscript>
+                </form>
+            {% endif %}
+            {% block actions %}{% endblock %}
+            <form method="post" action="{% url 'logout' %}">
+                {% csrf_token %}
+                <button class="btn" type="submit">Выйти</button>
+            </form>
+        </div>
+    </header>
+
+    {% if messages %}
+        <div class="messages">
+            {% for message in messages %}
+                <div class="msg {% if message.tags %}{{ message.tags }}{% endif %}">{{ message }}</div>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    {% block content %}{% endblock %}
+</div>
+{% block scripts %}{% endblock %}
+</body>
+</html>
