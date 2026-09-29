@@ -1,4 +1,6 @@
 from django import forms
+from django.db.models import Max, Min
+from django.utils import timezone
 
 from .constants import (
     CONSUMABLE_ITEMS,
@@ -37,6 +39,10 @@ class WorkEntryForm(forms.Form):
         choices=CUSTOM_SECTION_CHOICES,
         required=False,
     )
+    service_date = forms.DateField(
+        label="Дата выполнения",
+        widget=forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
+    )
     mileage = forms.IntegerField(
         label="Пробег (км)",
         min_value=0,
@@ -50,7 +56,9 @@ class WorkEntryForm(forms.Form):
 
     def __init__(self, *args, **kwargs):
         custom_items_by_type = kwargs.pop("custom_items_by_type", None)
+        self.car = kwargs.pop("car", None)
         super().__init__(*args, **kwargs)
+        self.fields["service_date"].initial = timezone.localdate
         self.custom_items_by_type = custom_items_by_type or {
             ELEMENT_TYPE_CONSUMABLE: [],
             ELEMENT_TYPE_WORK: [],
@@ -80,6 +88,23 @@ class WorkEntryForm(forms.Form):
     def clean_custom_item_name(self):
         return self._normalize_name(self.cleaned_data.get("custom_item_name"))
 
+    def clean_service_date(self):
+        service_date = self.cleaned_data["service_date"]
+        if service_date > timezone.localdate():
+            raise forms.ValidationError("Дата не может быть в будущем.")
+        return service_date
+
+    def _validate_mileage(self, service_date, mileage):
+        if self.car is None or service_date is None or mileage is None:
+            return
+        entries = self.car.service_card_entries.filter(mileage__isnull=False)
+        max_before = entries.filter(service_date__lt=service_date).aggregate(value=Max("mileage"))["value"]
+        min_after = entries.filter(service_date__gt=service_date).aggregate(value=Min("mileage"))["value"]
+        if max_before is not None and mileage < max_before:
+            self.add_error("mileage", f"Пробег меньше, чем в более ранней записи ({max_before} км).")
+        elif min_after is not None and mileage > min_after:
+            self.add_error("mileage", f"Пробег больше, чем в более поздней записи ({min_after} км).")
+
     def clean(self):
         cleaned_data = super().clean()
         element_type = cleaned_data.get("element_type")
@@ -93,6 +118,8 @@ class WorkEntryForm(forms.Form):
             raise forms.ValidationError("Некорректный выбор элемента.")
         if custom_item_name and custom_item_name not in allowed_values and not cleaned_data.get("custom_section"):
             self.add_error("custom_section", "Укажите раздел для нового пункта.")
+
+        self._validate_mileage(cleaned_data.get("service_date"), cleaned_data.get("mileage"))
 
         cleaned_data["item_name"] = resolved_item_name
         return cleaned_data

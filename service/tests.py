@@ -1,6 +1,8 @@
 from django.test import TestCase
 from django.urls import reverse
 from django.contrib.auth import get_user_model
+from datetime import date, timedelta
+
 from django.utils import timezone
 
 from cars.models import Car
@@ -40,6 +42,7 @@ class ServiceCardViewTests(TestCase):
             data={
                 "element_type": "consumable",
                 "item_name": "Масло ДВС 5W-40",
+                "service_date": timezone.localdate().isoformat(),
                 "mileage": "100500",
                 "cost": "6300",
             },
@@ -120,6 +123,7 @@ class ServiceCardViewTests(TestCase):
                 "item_name": "Чистка форсунок",
                 "custom_item_name": "Замена лампы ближнего света",
                 "custom_section": "extra",
+                "service_date": timezone.localdate().isoformat(),
                 "mileage": "101000",
                 "cost": "1200",
             },
@@ -147,6 +151,7 @@ class ServiceCardViewTests(TestCase):
                 "item_name": "Замена лампы ближнего света",
                 "custom_item_name": "",
                 "custom_section": "",
+                "service_date": timezone.localdate().isoformat(),
                 "mileage": "101500",
                 "cost": "1300",
             },
@@ -175,6 +180,7 @@ class ServiceCardViewTests(TestCase):
                 "item_name": "Замена рулевого наконечника",
                 "custom_item_name": "",
                 "custom_section": "",
+                "service_date": timezone.localdate().isoformat(),
                 "mileage": "102500",
                 "cost": "3400",
             },
@@ -186,3 +192,67 @@ class ServiceCardViewTests(TestCase):
             mileage=102500,
         )
         self.assertEqual(created_entry.section, ServiceCardEntry.Section.CHASSIS)
+
+    def _post_entry(self, **overrides):
+        data = {
+            "element_type": "consumable",
+            "item_name": "Масло ДВС 5W-40",
+            "service_date": timezone.localdate().isoformat(),
+            "mileage": "100500",
+            "cost": "6300",
+        }
+        data.update(overrides)
+        return self.client.post(reverse("service:service_card"), data=data)
+
+    def test_entry_can_be_saved_with_past_date(self):
+        self.client.login(username="tester", password="pass12345")
+        response = self._post_entry(service_date="2025-05-10", mileage="95000")
+        self.assertEqual(response.status_code, 302)
+        entry = ServiceCardEntry.objects.get(car=self.car, mileage=95000)
+        self.assertEqual(entry.service_date, date(2025, 5, 10))
+
+    def test_future_date_is_rejected(self):
+        self.client.login(username="tester", password="pass12345")
+        tomorrow = timezone.localdate() + timedelta(days=1)
+        response = self._post_entry(service_date=tomorrow.isoformat())
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("service_date", response.context["work_form"].errors)
+        self.assertFalse(ServiceCardEntry.objects.exists())
+
+    def test_mileage_lower_than_earlier_entry_is_rejected(self):
+        ServiceCardEntry.objects.create(
+            car=self.car,
+            section=ServiceCardEntry.Section.REGULAR,
+            element_type=ServiceCardEntry.ElementType.CONSUMABLE,
+            item_name="Масляный фильтр",
+            service_date="2025-01-01",
+            mileage=120000,
+        )
+        self.client.login(username="tester", password="pass12345")
+        response = self._post_entry(service_date="2025-06-01", mileage="110000")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("mileage", response.context["work_form"].errors)
+
+    def test_mileage_higher_than_later_entry_is_rejected(self):
+        ServiceCardEntry.objects.create(
+            car=self.car,
+            section=ServiceCardEntry.Section.REGULAR,
+            element_type=ServiceCardEntry.ElementType.CONSUMABLE,
+            item_name="Масляный фильтр",
+            service_date="2025-06-01",
+            mileage=90000,
+        )
+        self.client.login(username="tester", password="pass12345")
+        response = self._post_entry(service_date="2025-01-01", mileage="95000")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("mileage", response.context["work_form"].errors)
+
+    def test_car_mileage_is_updated_only_when_higher(self):
+        self.client.login(username="tester", password="pass12345")
+        self._post_entry(mileage="105000")
+        self.car.refresh_from_db()
+        self.assertEqual(self.car.current_mileage, 105000)
+
+        self._post_entry(service_date="2024-01-01", mileage="80000")
+        self.car.refresh_from_db()
+        self.assertEqual(self.car.current_mileage, 105000)

@@ -1,12 +1,11 @@
 import json
 from collections import defaultdict
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import redirect, render
-from django.utils import timezone
 
 from .constants import (
     CONSUMABLE_ITEMS,
@@ -92,7 +91,7 @@ def _build_section_rows(section_entries):
         entries = sorted(
             entries,
             key=lambda entry: (
-                entry.service_date or timezone.datetime.min.date(),
+                entry.service_date or date.min,
                 entry.id,
             ),
         )
@@ -117,7 +116,7 @@ def _build_section_rows(section_entries):
         )
 
     rows.sort(
-        key=lambda row: (row["last_date"] or timezone.datetime.min.date(), row["item_name"]),
+        key=lambda row: (row["last_date"] or date.min, row["item_name"]),
         reverse=True,
     )
     return rows
@@ -186,12 +185,14 @@ def service_card_view(request):
         work_form = WorkEntryForm(
             request.POST,
             custom_items_by_type=custom_items_by_type,
+            car=car,
         )
         if work_form.is_valid():
             element_type = work_form.cleaned_data["element_type"]
             item_name = work_form.cleaned_data["item_name"]
             custom_item_name = work_form.cleaned_data["custom_item_name"]
             custom_section = work_form.cleaned_data["custom_section"]
+            service_date = work_form.cleaned_data["service_date"]
             mileage = work_form.cleaned_data["mileage"]
             cost = work_form.cleaned_data["cost"]
             section = ITEM_TO_SECTION.get(item_name)
@@ -208,7 +209,7 @@ def service_card_view(request):
                     "section": section,
                     "element_type": element_type,
                     "item_name": item_name,
-                    "service_date": timezone.localdate(),
+                    "service_date": service_date,
                     "mileage": mileage,
                     "cost": cost,
                 }
@@ -222,6 +223,9 @@ def service_card_view(request):
                 ServiceCardEntry.objects.create(
                     **create_kwargs,
                 )
+                if mileage > car.current_mileage:
+                    car.current_mileage = mileage
+                    car.save(update_fields=["current_mileage"])
 
                 if custom_item_name and item_name not in ITEM_TO_SECTION:
                     custom_item, created = CustomServiceItem.objects.get_or_create(
@@ -239,7 +243,7 @@ def service_card_view(request):
 
         messages.error(request, "Проверьте заполнение формы.")
     else:
-        work_form = WorkEntryForm(custom_items_by_type=custom_items_by_type)
+        work_form = WorkEntryForm(custom_items_by_type=custom_items_by_type, car=car)
 
     entries = ServiceCardEntry.objects.filter(car=car)
     sections = []

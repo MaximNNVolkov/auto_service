@@ -186,6 +186,7 @@
         <h2 class="work-form-title">Внесите проделанную работу</h2>
         <form method="post">
             {% csrf_token %}
+            <div class="field">{{ work_form.non_field_errors }}</div>
             <div class="form-grid">
                 <div class="field">
                     {{ work_form.element_type.label_tag }}
@@ -206,6 +207,11 @@
                     {{ work_form.custom_section.label_tag }}
                     {{ work_form.custom_section }}
                     {{ work_form.custom_section.errors }}
+                </div>
+                <div class="field">
+                    {{ work_form.service_date.label_tag }}
+                    {{ work_form.service_date }}
+                    {{ work_form.service_date.errors }}
                 </div>
                 <div class="field">
                     {{ work_form.mileage.label_tag }}
