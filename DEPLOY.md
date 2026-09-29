@@ -36,8 +36,15 @@ Set real values in `.env`, especially:
 - `DJANGO_SECRET_KEY`
 - `DJANGO_ALLOWED_HOSTS`
 - `DJANGO_CSRF_TRUSTED_ORIGINS`
+- `DJANGO_SECURE_HSTS_SECONDS` (start with `3600`, raise to `31536000` once HTTPS is stable)
 
 ## 5. Migrate and collect static
+
+Before migrating an existing installation, back up the database:
+
+```bash
+cp db.sqlite3 db.sqlite3.bak-$(date +%F)
+```
 
 ```bash
 set -a; source .env; set +a
@@ -103,4 +110,12 @@ Enable and reload:
 sudo ln -s /etc/nginx/sites-available/auto_service /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl reload nginx
+```
+
+## 8. Logs
+
+Django logs go to stderr and end up in journald:
+
+```bash
+journalctl -u auto_service -f
 ```

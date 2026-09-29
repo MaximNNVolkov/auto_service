@@ -1,4 +1,7 @@
 from django import forms
+from django.core.validators import MinValueValidator
+from django.db.models import Max, Min
+from django.utils import timezone
 
 from .constants import (
     CONSUMABLE_ITEMS,
@@ -10,13 +13,40 @@ from .constants import (
 from .models import ServiceCardEntry
 
 
-class WorkEntryForm(forms.Form):
-    CUSTOM_SECTION_CHOICES = (
-        (ServiceCardEntry.Section.REGULAR, "Регулярное ТО"),
-        (ServiceCardEntry.Section.BRAKES, "Тормозная система"),
-        (ServiceCardEntry.Section.CHASSIS, "Ходовая и рулевое"),
-        (ServiceCardEntry.Section.EXTRA, "Дополнительные работы"),
-    )
+class EntryValidationMixin:
+    """Проверки даты и пробега относительно других записей автомобиля."""
+
+    car = None
+    exclude_entry_pk = None
+
+    def clean_service_date(self):
+        service_date = self.cleaned_data["service_date"]
+        if service_date and service_date > timezone.localdate():
+            raise forms.ValidationError("Дата не может быть в будущем.")
+        return service_date
+
+    def _validate_mileage(self, service_date, mileage):
+        if self.car is None or service_date is None or mileage is None:
+            return
+        entries = self.car.service_card_entries.filter(mileage__isnull=False)
+        if self.exclude_entry_pk is not None:
+            entries = entries.exclude(pk=self.exclude_entry_pk)
+        max_before = entries.filter(service_date__lt=service_date).aggregate(value=Max("mileage"))["value"]
+        min_after = entries.filter(service_date__gt=service_date).aggregate(value=Min("mileage"))["value"]
+        if max_before is not None and mileage < max_before:
+            self.add_error("mileage", f"Пробег меньше, чем в более ранней записи ({max_before} км).")
+        elif min_after is not None and mileage > min_after:
+            self.add_error("mileage", f"Пробег больше, чем в более поздней записи ({min_after} км).")
+
+
+def _date_widget():
+    return forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d")
+
+
+class WorkEntryForm(EntryValidationMixin, forms.Form):
+    CUSTOM_SECTION_CHOICES = [
+        choice for choice in ServiceCardEntry.Section.choices if choice[0] != ServiceCardEntry.Section.PLAN
+    ]
 
     element_type = forms.ChoiceField(
         label="Тип элемента",
@@ -37,6 +67,10 @@ class WorkEntryForm(forms.Form):
         choices=CUSTOM_SECTION_CHOICES,
         required=False,
     )
+    service_date = forms.DateField(
+        label="Дата выполнения",
+        widget=_date_widget(),
+    )
     mileage = forms.IntegerField(
         label="Пробег (км)",
         min_value=0,
@@ -50,7 +84,9 @@ class WorkEntryForm(forms.Form):
 
     def __init__(self, *args, **kwargs):
         custom_items_by_type = kwargs.pop("custom_items_by_type", None)
+        self.car = kwargs.pop("car", None)
         super().__init__(*args, **kwargs)
+        self.fields["service_date"].initial = timezone.localdate
         self.custom_items_by_type = custom_items_by_type or {
             ELEMENT_TYPE_CONSUMABLE: [],
             ELEMENT_TYPE_WORK: [],
@@ -94,5 +130,33 @@ class WorkEntryForm(forms.Form):
         if custom_item_name and custom_item_name not in allowed_values and not cleaned_data.get("custom_section"):
             self.add_error("custom_section", "Укажите раздел для нового пункта.")
 
+        self._validate_mileage(cleaned_data.get("service_date"), cleaned_data.get("mileage"))
+
         cleaned_data["item_name"] = resolved_item_name
+        return cleaned_data
+
+
+class EntryEditForm(EntryValidationMixin, forms.ModelForm):
+    class Meta:
+        model = ServiceCardEntry
+        fields = ("service_date", "mileage", "cost")
+        labels = {
+            "service_date": "Дата выполнения",
+            "mileage": "Пробег (км)",
+            "cost": "Стоимость (руб.)",
+        }
+        widgets = {"service_date": _date_widget()}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.car = self.instance.car
+        self.exclude_entry_pk = self.instance.pk
+        self.fields["service_date"].required = True
+        self.fields["cost"].validators.append(MinValueValidator(0))
+        for field in self.fields.values():
+            field.widget.attrs.setdefault("class", "input")
+
+    def clean(self):
+        cleaned_data = super().clean()
+        self._validate_mileage(cleaned_data.get("service_date"), cleaned_data.get("mileage"))
         return cleaned_data
